@@ -25,6 +25,7 @@ class Controller2D(object):
         self._conv_rad_to_steer  = 180.0 / 70.0 / np.pi
         self._pi                 = np.pi
         self._2pi                = 2.0 * np.pi
+        self._i = 0
 
     def update_values(self, x, y, yaw, speed, timestamp, frame):
         self._current_x         = x
@@ -65,7 +66,7 @@ class Controller2D(object):
         self._set_throttle = throttle
 
     def set_steer(self, input_steer_in_rad):
-        # Covnert radians to [-1, 1]
+        # Convert radians to [-1, 1]
         input_steer = self._conv_rad_to_steer * input_steer_in_rad
 
         # Clamp the steering command to valid bounds
@@ -93,6 +94,20 @@ class Controller2D(object):
         steer_output    = 0
         brake_output    = 0
 
+        def angle_to_limits(angle):
+            if angle > np.pi:
+                angle -= self._2pi
+            elif angle < - np.pi:
+                angle += self._2pi
+            return angle
+
+        def delta_to_limits(delta):
+            if delta > self._pi:
+                delta = min(delta - self._2pi, 1.22)
+            elif delta < -self._pi:
+                delta = max(delta + self._2pi, 1.22)
+            return delta
+
         ######################################################
         ######################################################
         # MODULE 7: DECLARE USAGE VARIABLES HERE
@@ -114,6 +129,10 @@ class Controller2D(object):
             throttle_output = 0.5 * self.vars.v_previous
         """
         self.vars.create_var('v_previous', 0.0)
+        self.vars.create_var('v_error_km1', 0.0)
+        self.vars.create_var('t_km1', 0.0)
+        self.vars.create_var('integral_error_km1', 0.0)
+        self.vars.create_var('v_error_km1', 0.0)
 
         # Skip the first frame to store previous values properly
         if self._start_control_loop:
@@ -166,6 +185,33 @@ class Controller2D(object):
             throttle_output = 0
             brake_output    = 0
 
+            k_P = 2
+            k_I = 0.5
+            k_D = 0.01
+
+
+            # PID
+
+            delta_t = t - self.vars.t_km1
+            v_error = v_desired - v
+
+            P = k_P * v_error
+
+            integral_error = self.vars.integral_error_km1 + v_error * delta_t
+            I = k_I * integral_error
+            D = k_D * (v_error - self.vars.v_error_km1)/delta_t
+
+            acc = P + I + D
+
+            if acc > 0:
+                throttle_output = np.tanh(acc)
+                brake_output = 0
+            else:
+                brake_output = -np.tanh(acc)
+                throttle_output = 0
+
+
+
             ######################################################
             ######################################################
             # MODULE 7: IMPLEMENTATION OF LATERAL CONTROLLER HERE
@@ -179,6 +225,45 @@ class Controller2D(object):
             
             # Change the steer output with the lateral controller. 
             steer_output    = 0
+
+            ## Geometric Lateral Control - Stanley - see https://d3c33hcgiwev3.cloudfront.net/_wM8kyDxEem9_wqPhE1wLA_ff19d14020f111e99167b944be537fd0_Automatic_Steering_Methods_for_Autonomous_Automobile_Path_Tracking.pdf?Expires=1647648000&Signature=jejWqUFtnKIGR135tKCJ9lUn0xPHSjCY1-HHLpmWK-PUlkNTKXaDY6u9cf1xuiNCynen0AiB97SCN08kWgrcjEckaEtBmdfWHQWTpqqQotYLOyL1ILTBqvKACigR5sxWIY3-XL9sIF~8rvq7QagvfbtSzvyqfS2o8CNFJ4nuNyA_&Key-Pair-Id=APKAJLTNE6QMUY6HBC5A
+
+            k_e = 1
+
+            # 1. calculate headings
+
+            delta_y_path = waypoints[-1][1] - waypoints[0][1]
+            delta_x_path = waypoints[-1][0] - waypoints[0][0]
+            yaw_path = np.arctan2(delta_y_path, delta_x_path)
+
+            delta_y_car = y - waypoints[0][1]
+            delta_x_car = x - waypoints[0][0]
+            yaw_crosstrack = np.arctan2(delta_y_car, delta_x_car)
+
+            angle_path_to_crosstrack = angle_to_limits(yaw_path - yaw_crosstrack)
+
+            theta = angle_to_limits(yaw_path - yaw)
+
+            # 2. calculate crosstrack error - minimal distance between current position and desired path -> pythagoras
+            crosstrack_error = np.min( # minimum of all distances
+                np.sum(
+                    (
+                            np.array([x, y])-np.array(waypoints)[:, :2] # calculate all distances between car position and all waypoints
+                    )**2 # calculate pythagoras
+                    , axis=1)
+            )
+
+            if angle_path_to_crosstrack >= 0:
+                crosstrack_error = abs(crosstrack_error)
+            else:
+                crosstrack_error = -abs(crosstrack_error)
+
+            delta = delta_to_limits(
+                theta + np.arctan(k_e * crosstrack_error / v)
+            )
+
+            steer_output = delta
+
 
             ######################################################
             # SET CONTROLS OUTPUT
@@ -198,3 +283,6 @@ class Controller2D(object):
             in the next iteration)
         """
         self.vars.v_previous = v  # Store forward speed to be used in next step
+        self.vars.t_km1 = t
+        self.vars.integral_error_km1 = integral_error
+        self.vars.v_error_km1 = v_error
