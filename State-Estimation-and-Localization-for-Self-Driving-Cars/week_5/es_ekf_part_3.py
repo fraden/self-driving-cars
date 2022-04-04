@@ -14,7 +14,7 @@ from rotations import angle_normalize, rpy_jacobian_axis_angle, skew_symmetric, 
 # This is where you will load the data from the pickle files. For parts 1 and 2, you will use
 # p1_data.pkl. For Part 3, you will use pt3_data.pkl.
 ################################################################################################
-with open('data/pt1_data.pkl', 'rb') as file:
+with open('data/pt3_data.pkl', 'rb') as file:
     data = pickle.load(file)
 
 ################################################################################################
@@ -98,8 +98,9 @@ lidar.data = (C_li @ lidar.data.T).T + t_i_li
 ################################################################################################
 var_imu_f = 0.10
 var_imu_w = 0.25
-var_gnss  = 0.01
-var_lidar = 1.00
+var_gnss  = 10
+var_lidar = 10
+
 
 ################################################################################################
 # We can also set up some constants that won't change for any iteration of our solver.
@@ -134,14 +135,25 @@ lidar_i = 0
 # Since we'll need a measurement update for both the GNSS and the LIDAR data, let's make
 # a function for it.
 ################################################################################################
+
+
 def measurement_update(sensor_var, p_cov_check, y_k, p_check, v_check, q_check):
     # 3.1 Compute Kalman Gain
+    r_k = sensor_var * np.eye(3)
+    k_k = p_cov_check @ h_jac.T @ np.linalg.inv(h_jac @ p_cov_check @ h_jac.T + r_k)
 
     # 3.2 Compute error state
-
+    p_delta = k_k @ (y_k - p_check)
+    positions_delta = p_delta[0:3]
+    velocities_delta = p_delta[3:6]
+    angles_delta = p_delta[6:9]
     # 3.3 Correct predicted state
+    p_hat = p_check + positions_delta
+    v_hat = v_check + velocities_delta
+    q_hat = Quaternion(euler=angles_delta).quat_mult_left(q_check)
 
     # 3.4 Compute corrected covariance
+    p_cov_hat = (np.eye(9) - k_k @ h_jac) @ p_cov_check
 
     return p_hat, v_hat, q_hat, p_cov_hat
 
@@ -155,14 +167,36 @@ for k in range(1, imu_f.data.shape[0]):  # start at 1 b/c we have initial predic
     delta_t = imu_f.t[k] - imu_f.t[k - 1]
 
     # 1. Update state with IMU inputs
+    C_ns = Quaternion(*q_est[k - 1]).to_mat()
+
+    C_ns_u = C_ns @ imu_f.data[k - 1]
+
+    p_est[k] = p_est[k - 1] + v_est[k - 1] * delta_t + (delta_t ** 2) * (C_ns_u + g) / 2 # p_est_k = p_est_km1 + v*t + 1/2 * a * t^2
+    v_est[k] = v_est[k - 1] + delta_t * (C_ns_u + g) # v_k = v_est_km1 + t * (C_ns*f_km1-g)
+    q_est[k] = Quaternion(axis_angle=imu_w.data[k - 1] * delta_t).quat_mult_right(q_est[k - 1]) # q_k = Omega(q(w_km1*t))*q_km1
 
     # 1.1 Linearize the motion model and compute Jacobians
+    F_km1 = np.eye(9)
+    F_km1[0:3, 3:6] = delta_t * np.eye(3)
+    F_km1[3:6, 6:9] = -skew_symmetric(C_ns_u) * delta_t
 
-    # 2. Propagate uncertainty
+    # 2. Propagate uncertainty  # Q_k = delta_t ** 2 * var
+    Q_k = np.eye(6)
+    Q_k[0:3, 0:3] = Q_k[0:3, 0:3] * delta_t**2 * var_imu_f
+    Q_k[3:6, 3:6] = Q_k[3:6, 3:6] * delta_t**2 * var_imu_w
+    p_cov[k] = F_km1 @ p_cov[k-1] @ F_km1.T + l_jac @ Q_k @ l_jac.T
 
-    # 3. Check availability of GNSS and LIDAR measurements
+    # 3. Check availability of GNSS measurements and update states:
+    if gnss_i < gnss.data.shape[0] and gnss.t[gnss_i] == imu_f.t[k-1]:
+        p_est[k], v_est[k], q_est[k], p_cov[k] = \
+            measurement_update(var_gnss, p_cov[k], gnss.data[gnss_i].T, p_est[k], v_est[k], q_est[k])
+        gnss_i += 1
 
-    # Update states (save)
+    # 3. Check availability of LIDAR measurements and update states:
+    if lidar_i < lidar.t.shape[0] and lidar.t[lidar_i] == imu_f.t[k - 1]:
+        p_est[k], v_est[k], q_est[k], p_cov[k] = \
+            measurement_update(var_lidar, p_cov[k], lidar.data[lidar_i].T, p_est[k], v_est[k], q_est[k])
+        lidar_i += 1
 
 #### 6. Results and Analysis ###################################################################
 
@@ -242,13 +276,13 @@ plt.show()
 ################################################################################################
 
 # Pt. 1 submission
-p1_indices = [9000, 9400, 9800, 10200, 10600]
-p1_str = ''
-for val in p1_indices:
-    for i in range(3):
-        p1_str += '%.3f ' % (p_est[val, i])
-with open('pt1_submission.txt', 'w') as file:
-    file.write(p1_str)
+# p1_indices = [9000, 9400, 9800, 10200, 10600]
+# p1_str = ''
+# for val in p1_indices:
+#     for i in range(3):
+#         p1_str += '%.3f ' % (p_est[val, i])
+# with open('pt1_submission.txt', 'w') as file:
+#     file.write(p1_str)
 
 # Pt. 2 submission
 # p2_indices = [9000, 9400, 9800, 10200, 10600]
@@ -260,10 +294,10 @@ with open('pt1_submission.txt', 'w') as file:
 #     file.write(p2_str)
 
 # Pt. 3 submission
-# p3_indices = [6800, 7600, 8400, 9200, 10000]
-# p3_str = ''
-# for val in p3_indices:
-#     for i in range(3):
-#         p3_str += '%.3f ' % (p_est[val, i])
-# with open('pt3_submission.txt', 'w') as file:
-#     file.write(p3_str)
+p3_indices = [6800, 7600, 8400, 9200, 10000]
+p3_str = ''
+for val in p3_indices:
+    for i in range(3):
+        p3_str += '%.3f ' % (p_est[val, i])
+with open('pt3_submission.txt', 'w') as file:
+    file.write(p3_str)
