@@ -15,8 +15,8 @@ import velocity_planner
 from math import sin, cos, pi, sqrt
 
 class LocalPlanner:
-    def __init__(self, num_paths, path_offset, circle_offsets, circle_radii, 
-                 path_select_weight, time_gap, a_max, slow_speed, 
+    def __init__(self, num_paths, path_offset, circle_offsets, circle_radii,
+                 path_select_weight, time_gap, a_max, slow_speed,
                  stop_line_buffer):
         self._num_paths = num_paths
         self._path_offset = path_offset
@@ -26,7 +26,7 @@ class LocalPlanner:
                                                circle_radii,
                                                path_select_weight)
         self._velocity_planner = \
-            velocity_planner.VelocityPlanner(time_gap, a_max, slow_speed, 
+            velocity_planner.VelocityPlanner(time_gap, a_max, slow_speed,
                                              stop_line_buffer)
 
     ######################################################
@@ -42,8 +42,8 @@ class LocalPlanner:
     # perpendicular to the goal yaw of the ego vehicle.
     def get_goal_state_set(self, goal_index, goal_state, waypoints, ego_state):
         """Gets the goal states given a goal position.
-        
-        Gets the goal states given a goal position. The states 
+
+        Gets the goal states given a goal position. The states
 
         args:
             goal_index: Goal index for the vehicle to reach
@@ -57,7 +57,7 @@ class LocalPlanner:
                          ...
                          [xn, yn, vn]]
                 example:
-                    waypoints[2][1]: 
+                    waypoints[2][1]:
                     returns the 3rd waypoint's y position
 
                     waypoints[5]:
@@ -87,15 +87,25 @@ class LocalPlanner:
         # consecutive waypoints, then use the np.arctan2() function.
         # TODO: INSERT YOUR CODE BETWEEN THE DASHED LINES
         # ------------------------------------------------------------------
-        # if ...
-        # delta_x = ...
-        # delta_y = ...
-        # else: ...
-        # ...
-        # heading = ...
+        if goal_index == len(waypoints) - 1:
+            x_km1 = waypoints[goal_index-1][0]
+            y_km1 = waypoints[goal_index - 1][1]
+
+            x_k = waypoints[goal_index][0]
+            y_k = waypoints[goal_index][1]
+
+        else:
+            x_km1 = waypoints[goal_index][0]
+            y_km1 = waypoints[goal_index][1]
+
+            x_k = waypoints[goal_index + 1][0]
+            y_k = waypoints[goal_index + 1][1]
+        delta_x = x_k - x_km1
+        delta_y = y_k - y_km1
+        heading = np.arctan2(delta_y, delta_x)
         # ------------------------------------------------------------------
 
-        # Compute the center goal state in the local frame using 
+        # Compute the center goal state in the local frame using
         # the ego state. The following code will transform the input
         # goal state to the ego vehicle's local frame.
         # The goal state will be of the form (x, y, t, v).
@@ -105,8 +115,8 @@ class LocalPlanner:
         # This is done by subtracting the ego_state from the goal_state_local.
         # TODO: INSERT YOUR CODE BETWEEN THE DASHED LINES
         # ------------------------------------------------------------------
-        # goal_state_local[0] -= ... 
-        # goal_state_local[1] -= ... 
+        goal_state_local[0] -= ego_state[0]
+        goal_state_local[1] -= ego_state[1]
         # ------------------------------------------------------------------
 
         # Rotate such that the ego state has zero heading in the new frame.
@@ -116,15 +126,18 @@ class LocalPlanner:
         # current yaw corresponds to theta = 0 in the new local frame.
         # TODO: INSERT YOUR CODE BETWEEN THE DASHED LINES
         # ------------------------------------------------------------------
-        # goal_x = ...
-        # goal_y = ...
+        x = goal_state_local[0]
+        y = goal_state_local[1]
+        theta = -ego_state[2]
+        goal_x = cos(theta) * x - sin(theta) * y
+        goal_y = sin(theta) * x + cos(theta) * y
         # ------------------------------------------------------------------
 
-        # Compute the goal yaw in the local frame by subtracting off the 
+        # Compute the goal yaw in the local frame by subtracting off the
         # current ego yaw from the heading variable.
         # TODO: INSERT YOUR CODE BETWEEN THE DASHED LINES
         # ------------------------------------------------------------------
-        # goal_t = ...
+        goal_t = heading - ego_state[2]
         # ------------------------------------------------------------------
 
         # Velocity is preserved after the transformation.
@@ -137,7 +150,7 @@ class LocalPlanner:
             goal_t += 2*pi
 
         # Compute and apply the offset for each path such that
-        # all of the paths have the same heading of the goal state, 
+        # all of the paths have the same heading of the goal state,
         # but are laterally offset with respect to the goal heading.
         goal_state_set = []
         for i in range(self._num_paths):
@@ -151,17 +164,17 @@ class LocalPlanner:
             # and sin(goal_theta + pi/2), respectively.
             # TODO: INSERT YOUR CODE BETWEEN THE DASHED LINES
             # ------------------------------------------------------------------
-            # x_offset = ...
-            # y_offset = ...
+            x_offset = offset * cos(goal_t + pi / 2)
+            y_offset = offset * sin(goal_t + pi / 2)
             # ------------------------------------------------------------------
 
-            goal_state_set.append([goal_x + x_offset, 
-                                   goal_y + y_offset, 
-                                   goal_t, 
+            goal_state_set.append([goal_x + x_offset,
+                                   goal_y + y_offset,
+                                   goal_t,
                                    goal_v])
-           
-        return goal_state_set  
-              
+
+        return goal_state_set
+
     # Plans the path set using polynomial spiral optimization to
     # each of the goal states.
     def plan_paths(self, goal_state_set):
@@ -184,7 +197,7 @@ class LocalPlanner:
                   v is the goal speed at the goal point.
                   all units are in m, m/s and radians
         returns:
-            paths: A list of optimized spiral paths which satisfies the set of 
+            paths: A list of optimized spiral paths which satisfies the set of
                 goal states. A path is a list of points of the following format:
                     [x_points, y_points, t_points]:
                         x_points: List of x values (m) along the spiral
@@ -201,11 +214,11 @@ class LocalPlanner:
         paths         = []
         path_validity = []
         for goal_state in goal_state_set:
-            path = self._path_optimizer.optimize_spiral(goal_state[0], 
-                                                        goal_state[1], 
+            path = self._path_optimizer.optimize_spiral(goal_state[0],
+                                                        goal_state[1],
                                                         goal_state[2])
-            if np.linalg.norm([path[0][-1] - goal_state[0], 
-                               path[1][-1] - goal_state[1], 
+            if np.linalg.norm([path[0][-1] - goal_state[0],
+                               path[1][-1] - goal_state[1],
                                path[2][-1] - goal_state[2]]) > 0.1:
                 path_validity.append(False)
             else:
@@ -221,7 +234,7 @@ def transform_paths(paths, ego_state):
     global coordinate frame.
 
     args:
-        paths: A list of paths in the local (vehicle) frame.  
+        paths: A list of paths in the local (vehicle) frame.
             A path is a list of points of the following format:
                 [x_points, y_points, t_points]:
                     , x_points: List of x values (m)
@@ -235,13 +248,13 @@ def transform_paths(paths, ego_state):
                 ego_yaw             : top-down orientation [-pi to pi]
                 ego_open_loop_speed : open loop speed (m/s)
     returns:
-        transformed_paths: A list of transformed paths in the global frame.  
+        transformed_paths: A list of transformed paths in the global frame.
             A path is a list of points of the following format:
                 [x_points, y_points, t_points]:
                     , x_points: List of x values (m)
                     , y_points: List of y values (m)
                     , t_points: List of yaw values (rad)
-                Example of accessing the ith transformed path, jth point's 
+                Example of accessing the ith transformed path, jth point's
                 y value:
                     paths[i][1][j]
     """
